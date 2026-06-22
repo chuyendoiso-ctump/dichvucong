@@ -1,9 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-const BASE_URL = "/api";
+const GOOGLE_SCRIPT_URL = process.env.NEXT_PUBLIC_GOOGLE_SCRIPT_URL || "";
 
 // 🔥 generic fetcher
 const fetcher = async (url: string) => {
+  if (!url) {
+    console.warn("GOOGLE_SCRIPT_URL is not set.");
+    return [];
+  }
   const res = await fetch(url);
 
   if (!res.ok) {
@@ -21,5 +23,5 @@ const fetcher = async (url: string) => {
 
 // 🎯 services API
 export const getServices = async () => {
-  return fetcher(`${BASE_URL}/services`);
+  return fetcher(GOOGLE_SCRIPT_URL);
 };
