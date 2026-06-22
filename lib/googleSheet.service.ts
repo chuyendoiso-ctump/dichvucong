@@ -257,8 +257,18 @@ const rowToObject = (header: string[], row: string[]) => {
   return obj;
 };
 
+// ===== CACHE SYSTEM =====
+let cachedData: any[] | null = null;
+let cacheTimestamp: number = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 phút
+
 // ===== MAIN SERVICE =====
 export const fetchAllData = async () => {
+  const now = Date.now();
+  if (cachedData && (now - cacheTimestamp < CACHE_DURATION)) {
+    return cachedData;
+  }
+
   let workbook: XLSX.WorkBook;
 
   try {
@@ -267,11 +277,13 @@ export const fetchAllData = async () => {
       signal: AbortSignal.timeout(60000) // timeout 60 giây
     });
     if (!res.ok) {
+      if (cachedData) return cachedData;
       throw new Error(`HTTP error! status: ${res.status}`);
     }
     const arrayBuffer = await res.arrayBuffer();
     workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
   } catch (err: any) {
+    if (cachedData) return cachedData;
     return [
       {
         don_vi: "ALL",
@@ -408,5 +420,8 @@ export const fetchAllData = async () => {
       }
   });
 
-  return (results.flat() || []).filter(Boolean);
+  const finalData = (results.flat() || []).filter(Boolean);
+  cachedData = finalData;
+  cacheTimestamp = now;
+  return finalData;
 };
