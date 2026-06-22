@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import * as XLSX from "xlsx";
 import {
   hasDuKienValue,
   isDuKienCompleted as isDuKienCompletedStatus,
@@ -51,51 +50,6 @@ const safeKey = (k: string) =>
   normalize(k)
     .replace(/\s+/g, "_")
     .replace(/[^a-z0-9_]/g, "");
-
-// ===== XLSX → ROWS (giữ hyperlink ô) =====
-const getCellHyperlink = (cell?: XLSX.CellObject): string | undefined => {
-  const target = cell?.l?.Target;
-  if (!target) return undefined;
-  return target.replace(/&amp;/g, "&");
-};
-
-const worksheetToRows = (ws: XLSX.WorkSheet): string[][] => {
-  const ref = ws["!ref"];
-  if (!ref) return [];
-
-  const range = XLSX.utils.decode_range(ref);
-  const rows: string[][] = [];
-
-  for (let r = range.s.r; r <= range.e.r; r++) {
-    const row: string[] = [];
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const addr = XLSX.utils.encode_cell({ r, c });
-      const cell = ws[addr];
-      let value = "";
-      if (cell) {
-        if (cell.w != null) {
-          value = String(cell.w).trim();
-        } else if (cell.v != null) {
-          value = String(cell.v).trim();
-        }
-      }
-      const hyperlink = getCellHyperlink(cell);
-
-      if (hyperlink) {
-        if (!value || /^https?:\/\//i.test(value)) {
-          value = hyperlink;
-        } else if (!value.includes(hyperlink)) {
-          value = `${value}\n[Tài liệu](${hyperlink})`;
-        }
-      }
-
-      row.push(value);
-    }
-    rows.push(row);
-  }
-
-  return rows;
-};
 
 // ===== CSV PARSER (ROBUST) =====
 const parseCSV = (text: string): string[][] => {
@@ -269,69 +223,31 @@ export const fetchAllData = async () => {
     return cachedData;
   }
 
-  let workbook: XLSX.WorkBook;
-
-  try {
-    const xlsxUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=xlsx`;
-    const res = await fetch(xlsxUrl, {
-      signal: AbortSignal.timeout(60000) // timeout 60 giây
-    });
-    if (!res.ok) {
-      if (cachedData) return cachedData;
-      throw new Error(`HTTP error! status: ${res.status}`);
-    }
-    const arrayBuffer = await res.arrayBuffer();
-    workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
-  } catch (err: any) {
-    if (cachedData) return cachedData;
-    return [
-      {
-        don_vi: "ALL",
-        error: true,
-        message: err?.message || "XLSX_FETCH_FAILED",
-      },
-    ];
-  }
-
-  const results = SHEETS.map((sheet) => {
-    try {
-      let ws = workbook.Sheets[sheet.name];
-      if (!ws) {
-        const actualName = Object.keys(workbook.Sheets).find(
-          (k) => k.toLowerCase() === sheet.name.toLowerCase()
-        );
-        if (actualName) {
-          ws = workbook.Sheets[actualName];
+  const results = await Promise.all(
+    SHEETS.map(async (sheet) => {
+      try {
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv&gid=${sheet.gid}`;
+        const res = await fetch(csvUrl);
+        if (!res.ok) {
+          throw new Error("FETCH_FAILED");
         }
-      }
-
-      if (!ws) {
-        return [
-          {
-            don_vi: sheet.name,
-            error: true,
-            message: "SHEET_NOT_FOUND",
-            empty: true,
-          },
-        ];
-      }
-
-      const rows = worksheetToRows(ws);
+        const text = await res.text();
+        const rows = parseCSV(text);
 
         if (!rows.length) {
-  return [
-    {
-      don_vi: sheet.name,
-      stt: "",
-      ten_dich_vu: "",
-      toan_trinh: false,
-      mot_phan: false,
-      du_kien: false,
-      chi_tiet: {},
-      empty: true,
-    },
-  ];
-}
+          return [
+            {
+              don_vi: sheet.name,
+              stt: "",
+              ten_dich_vu: "",
+              toan_trinh: false,
+              mot_phan: false,
+              du_kien: false,
+              chi_tiet: {},
+              empty: true,
+            },
+          ];
+        }
 
         const headerIdx = findHeaderIndex(rows);
         if (headerIdx === -1) {
@@ -352,15 +268,15 @@ export const fetchAllData = async () => {
         const cols = detectColumns(header);
 
         if (cols.stt === -1 || cols.ten === -1) {
-  return [
-    {
-      don_vi: sheet.name,
-      error: true,
-      message: "COLUMN_MAPPING_FAILED",
-      empty: true,
-    },
-  ];
-}
+          return [
+            {
+              don_vi: sheet.name,
+              error: true,
+              message: "COLUMN_MAPPING_FAILED",
+              empty: true,
+            },
+          ];
+        }
 
         const data: any[] = [];
 
@@ -379,33 +295,33 @@ export const fetchAllData = async () => {
           const duKienRaw = cols.du !== -1 ? (r[cols.du] || "").trim() : "";
 
           data.push({
-  don_vi: sheet.name,
-  stt,
-  ten_dich_vu: ten,
+            don_vi: sheet.name,
+            stt,
+            ten_dich_vu: ten,
 
-  // ✅ TOAN TRINH: X hoặc status text
-  toan_trinh:
-    cols.toan !== -1 &&
-    r[cols.toan] &&
-    isToanTrinh(r[cols.toan]),
+            // ✅ TOAN TRINH: X hoặc status text
+            toan_trinh:
+              cols.toan !== -1 &&
+              r[cols.toan] &&
+              isToanTrinh(r[cols.toan]),
 
-  // ✅ MOT PHAN: X ONLY (cực kỳ nghiêm ngặt)
-  mot_phan:
-    cols.mot !== -1 &&
-    r[cols.mot] &&
-    isMotPhan(r[cols.mot]),
+            // ✅ MOT PHAN: X ONLY (cực kỳ nghiêm ngặt)
+            mot_phan:
+              cols.mot !== -1 &&
+              r[cols.mot] &&
+              isMotPhan(r[cols.mot]),
 
-  // ✅ DU KIEN: có bất kỳ giá trị nào trong cột
-  du_kien: hasDuKienValue(duKienRaw),
-  du_kien_value: duKienRaw,
+            // ✅ DU KIEN: có bất kỳ giá trị nào trong cột
+            du_kien: hasDuKienValue(duKienRaw),
+            du_kien_value: duKienRaw,
 
-  // ✅ COMPLETED: chỉ status hoàn thành (không tính X)
-  completed: isDuKienCompletedStatus(duKienRaw) ? 1 : 0,
+            // ✅ COMPLETED: chỉ status hoàn thành (không tính X)
+            completed: isDuKienCompletedStatus(duKienRaw) ? 1 : 0,
 
-  chi_tiet: rowToObject(header, r),
+            chi_tiet: rowToObject(header, r),
 
-  empty: false,
-});
+            empty: false,
+          });
         }
 
         return data;
@@ -418,7 +334,8 @@ export const fetchAllData = async () => {
           },
         ];
       }
-  });
+    })
+  );
 
   const finalData = (results.flat() || []).filter(Boolean);
   cachedData = finalData;
