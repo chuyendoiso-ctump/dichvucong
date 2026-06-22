@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import axios from "axios";
 import * as XLSX from "xlsx";
 import {
   hasDuKienValue,
@@ -264,11 +263,14 @@ export const fetchAllData = async () => {
 
   try {
     const xlsxUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=xlsx`;
-    const xlsxRes = await axios.get(xlsxUrl, {
-      responseType: "arraybuffer",
-      timeout: 60000,
+    const res = await fetch(xlsxUrl, {
+      signal: AbortSignal.timeout(60000) // timeout 60 giây
     });
-    workbook = XLSX.read(xlsxRes.data, { type: "buffer" });
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
   } catch (err: any) {
     return [
       {
